@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: claims-postgres
+    environment:
+      POSTGRES_DB: claims
+      POSTGRES_USER: claims
+      POSTGRES_PASSWORD: claims
+    ports:
+      - "5432:5432"
+    volumes:
+      - claims-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Compose waits for this before reporting the service healthy, so the
+      # app never starts against a database that is still initialising.
+      test: ["CMD-SHELL", "pg_isready -U claims -d claims"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  claims-pgdata:

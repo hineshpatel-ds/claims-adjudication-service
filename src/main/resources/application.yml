@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: claims-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/claims
+    username: claims
+    password: claims
+
+  jpa:
+    # validate = Hibernate checks entities against the real schema and refuses
+    # to start on a mismatch. Flyway owns the schema; Hibernate only verifies.
+    # NEVER use 'update' or 'create' outside a throwaway sandbox.
+    hibernate:
+      ddl-auto: validate
+    # Keeping a DB connection open for the whole HTTP request (the default)
+    # hides lazy-loading bugs and exhausts the pool under load. Off, always.
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+logging:
+  level:
+    org.flywaydb: INFO
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
