@@ -66,8 +66,8 @@ under load.
 
 ---
 
-## Learning notes
+## Architecture decisions
 
-This repo doubles as a study record. [docs/learning/](docs/learning/) contains
-worked explanations of each concept as it was introduced, with self-test
-questions and answers.
+Significant decisions are recorded as ADRs in [docs/adr/](docs/adr/) - what was
+decided, why it was decided, and what it costs. Start there before changing a
+constraint that looks arbitrary.
