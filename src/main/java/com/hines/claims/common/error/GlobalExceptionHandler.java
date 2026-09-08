@@ -4,15 +4,20 @@ import com.hines.claims.claim.ClaimNotFoundException;
 import com.hines.claims.claim.IllegalClaimTransitionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
-import org.springframework.web.ErrorResponseException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
 import java.time.Instant;
@@ -22,21 +27,35 @@ import java.util.Map;
 /**
  * Turns exceptions into RFC 9457 problem details, in one place.
  *
- * <p>Two things this buys us. Every error in the API has the same shape, so a
- * client writes one parser. And no controller needs a try/catch, so each one
- * states its happy path and nothing else.
+ * <p>Extends {@link ResponseEntityExceptionHandler} deliberately. That base class
+ * already maps every standard Spring MVC exception to the right status - unknown
+ * route to 404, wrong method to 405, unsupported media type to 415, and a dozen
+ * more. Without it the catch-all at the bottom swallows all of them and reports
+ * 500, so a mistyped URL looks like a server fault.
  *
- * <p>The catch-all at the bottom exists so an unanticipated exception can never
- * reach a client as a stack trace. Class names, library versions, and sometimes
- * SQL fragments leak that way - a genuine finding in a regulated environment, not
- * a style note. The detail goes to the log; the client gets a reference id.
+ * <p>That is not hypothetical: this service returned 500 for an unknown route
+ * until this class was changed, and no unit test caught it - only calling the
+ * running service on a wrong path did. In production that means a bot probing for
+ * {@code /wp-admin} raises the 500-rate alarm and pages someone.
+ *
+ * <p>The division of labour:
+ * <ul>
+ *   <li>base class - standard Spring MVC exceptions</li>
+ *   <li>{@code @ExceptionHandler} methods - our domain exceptions</li>
+ *   <li>overrides - standard exceptions we want a better body for</li>
+ *   <li>catch-all - anything unanticipated, with nothing revealing in the body</li>
+ * </ul>
  */
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private static final String PROBLEM_BASE = "https://claims.hines.dev/problems/";
+
+    // ---------------------------------------------------------------------
+    // Domain exceptions
+    // ---------------------------------------------------------------------
 
     /** Unknown claim id -> 404. */
     @ExceptionHandler(ClaimNotFoundException.class)
@@ -50,8 +69,7 @@ public class GlobalExceptionHandler {
      * Illegal lifecycle transition -> 409, not 400.
      *
      * <p>The request is well-formed; it conflicts with the claim's current state.
-     * A 400 would tell the client its request was malformed, which is wrong and
-     * sends them looking in the wrong place.
+     * A 400 would send the caller looking for a payload bug that does not exist.
      */
     @ExceptionHandler(IllegalClaimTransitionException.class)
     ProblemDetail handleIllegalTransition(IllegalClaimTransitionException e) {
@@ -66,9 +84,9 @@ public class GlobalExceptionHandler {
     /**
      * Concurrent modification -> 409.
      *
-     * <p>Raised by the {@code @Version} column when another transaction changed
-     * the row since it was read. The client's own request was valid, so this is a
-     * conflict and is safe to retry after re-reading.
+     * <p>Raised by the {@code @Version} column when another transaction changed the
+     * row since it was read. The caller's request was valid, so this is a conflict
+     * and is safe to retry after re-reading.
      */
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     ProblemDetail handleConcurrentModification(ObjectOptimisticLockingFailureException e) {
@@ -79,26 +97,12 @@ public class GlobalExceptionHandler {
                 "concurrent-modification");
     }
 
-    /** Bean Validation failure on a request DTO -> 400, with per-field messages. */
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    ProblemDetail handleValidationFailure(MethodArgumentNotValidException e) {
-        Map<String, String> fieldErrors = new LinkedHashMap<>();
-        e.getBindingResult().getFieldErrors().forEach(error ->
-                fieldErrors.merge(error.getField(), defaultMessage(error.getDefaultMessage()),
-                        (first, second) -> first + "; " + second));
-
-        ProblemDetail problem = problem(HttpStatus.BAD_REQUEST,
-                "Validation failed", "One or more fields are invalid.", "validation-failed");
-        problem.setProperty("errors", fieldErrors);
-        return problem;
-    }
-
     /**
      * Domain invariant violated -> 400.
      *
      * <p>Reached when the entity rejects something the DTO constraints did not
-     * catch. Both layers guard the same rules on purpose (Lesson 5): the DTO for a
-     * precise message, the domain for a guarantee that holds for every caller.
+     * catch. Both layers guard the same rules on purpose: the DTO for a precise
+     * message, the domain for a guarantee that holds for every caller.
      */
     @ExceptionHandler(IllegalArgumentException.class)
     ProblemDetail handleInvalidArgument(IllegalArgumentException e) {
@@ -106,26 +110,10 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Unparseable body -> 400.
-     *
-     * <p>Covers malformed JSON and unknown enum values. The exception message can
-     * echo the raw payload, so it is logged rather than returned.
-     */
-    @ExceptionHandler(HttpMessageNotReadableException.class)
-    ProblemDetail handleUnreadableBody(HttpMessageNotReadableException e) {
-        log.debug("Unreadable request body", e);
-        return problem(HttpStatus.BAD_REQUEST,
-                "Malformed request",
-                "The request body could not be parsed. Check JSON syntax and field types.",
-                "malformed-request");
-    }
-
-    /**
      * A path or query parameter that will not convert -> 400.
      *
-     * <p>{@code /api/claims/not-a-uuid} fails before the controller method runs.
-     * Without this handler it falls through to the catch-all and surfaces as a
-     * 500, telling the client the server is broken when in fact their URL was.
+     * <p>More specific than the base class's {@code TypeMismatchException}
+     * handling, so this wins and can name the offending parameter.
      */
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException e) {
@@ -139,25 +127,105 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    // ---------------------------------------------------------------------
+    // Overrides of standard Spring MVC handling
+    // ---------------------------------------------------------------------
+
     /**
-     * Spring's own web exceptions already carry the correct status - unknown route
-     * (404), wrong HTTP method (405), unsupported content type (415). Passing them
-     * through preserves that.
+     * Bean Validation failure -> 400 with per-field messages.
      *
-     * <p>Without this, the catch-all below would swallow them and report 500 for
-     * an ordinary typo in a URL, which is both wrong and alarming in monitoring.
+     * <p>Overridden rather than added as a separate {@code @ExceptionHandler}: the
+     * base class already maps this type, and declaring a second handler for it in
+     * the same advice fails at startup with an ambiguous-mapping error.
      */
-    @ExceptionHandler(ErrorResponseException.class)
-    ProblemDetail handleSpringWebError(ErrorResponseException e) {
-        return e.getBody();
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException e,
+                                                                  HttpHeaders headers,
+                                                                  HttpStatusCode status,
+                                                                  WebRequest request) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        e.getBindingResult().getFieldErrors().forEach(error ->
+                fieldErrors.merge(error.getField(), defaultMessage(error.getDefaultMessage()),
+                        (first, second) -> first + "; " + second));
+
+        ProblemDetail problem = problem(HttpStatus.BAD_REQUEST,
+                "Validation failed", "One or more fields are invalid.", "validation-failed");
+        problem.setProperty("errors", fieldErrors);
+
+        return handleExceptionInternal(e, problem, headers, HttpStatus.BAD_REQUEST, request);
     }
+
+    /**
+     * Unparseable body -> 400.
+     *
+     * <p>Covers malformed JSON and unknown enum values. The raw message can echo
+     * the payload back, so it is logged rather than returned.
+     */
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException e,
+                                                                  HttpHeaders headers,
+                                                                  HttpStatusCode status,
+                                                                  WebRequest request) {
+        log.debug("Unreadable request body", e);
+
+        ProblemDetail problem = problem(HttpStatus.BAD_REQUEST,
+                "Malformed request",
+                "The request body could not be parsed. Check JSON syntax and field types.",
+                "malformed-request");
+
+        return handleExceptionInternal(e, problem, headers, HttpStatus.BAD_REQUEST, request);
+    }
+
+    /**
+     * Unknown route -> 404, in our own shape.
+     *
+     * <p>The base class produces {@code "No static resource api/foo."}, which is
+     * meaningless for a JSON API and quietly describes how request handling works
+     * internally. It also arrives without our {@code type} and {@code timestamp},
+     * so a client parsing errors would meet an envelope it had not seen before.
+     */
+    @Override
+    protected ResponseEntity<Object> handleNoResourceFoundException(NoResourceFoundException e,
+                                                                    HttpHeaders headers,
+                                                                    HttpStatusCode status,
+                                                                    WebRequest request) {
+        ProblemDetail problem = problem(HttpStatus.NOT_FOUND,
+                "Endpoint not found",
+                "No endpoint exists at this path. Check the URL and HTTP method.",
+                "endpoint-not-found");
+
+        return handleExceptionInternal(e, problem, headers, HttpStatus.NOT_FOUND, request);
+    }
+
+    /**
+     * Gives the base class's own problem details a timestamp, so a 405 from a wrong
+     * HTTP method has the same envelope as a 409 from our domain. One response
+     * format across the whole API, however the error arose.
+     */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception e,
+                                                             Object body,
+                                                             HttpHeaders headers,
+                                                             HttpStatusCode status,
+                                                             WebRequest request) {
+        if (body instanceof ProblemDetail problem
+                && (problem.getProperties() == null || !problem.getProperties().containsKey("timestamp"))) {
+            problem.setProperty("timestamp", Instant.now());
+        }
+        return super.handleExceptionInternal(e, body, headers, status, request);
+    }
+
+    // ---------------------------------------------------------------------
+    // Last resort
+    // ---------------------------------------------------------------------
 
     /**
      * Anything unanticipated -> 500, with nothing revealing in the body.
      *
-     * <p>The full stack trace goes to the log against a generated reference the
-     * client also receives, so a support request can be traced to the exact log
-     * entry without ever exposing internals over HTTP.
+     * <p>The full trace goes to the log against a generated reference the client
+     * also receives, so support can find the exact entry without a stack trace ever
+     * crossing the wire. Class names, library versions, and SQL fragments leak that
+     * way, and in a regulated environment that is an audit finding.
      */
     @ExceptionHandler(Exception.class)
     ProblemDetail handleUnexpected(Exception e) {

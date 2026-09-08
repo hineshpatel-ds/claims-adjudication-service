@@ -23,6 +23,7 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -271,6 +272,41 @@ class ClaimControllerTest {
         void a_malformed_uuid_is_a_bad_request_not_a_500() throws Exception {
             mockMvc.perform(get("/api/claims/{id}", "not-a-uuid"))
                     .andExpect(status().isBadRequest());
+        }
+    }
+
+    /**
+     * Regression tests for a real defect: the catch-all handler was swallowing
+     * Spring's own web exceptions and reporting 500 for them. An unknown route
+     * returned "Internal server error", which is wrong for the caller and, in
+     * production, wakes someone up over a typo in a URL.
+     *
+     * <p>No unit test caught it - only calling the running service did. These exist
+     * so it cannot come back.
+     */
+    @Nested
+    @DisplayName("standard web errors keep their own status codes")
+    class StandardWebErrors {
+
+        @Test
+        void an_unknown_route_returns_404_not_500() throws Exception {
+            mockMvc.perform(get("/api/nonexistent"))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.title").value("Endpoint not found"));
+        }
+
+        @Test
+        void the_wrong_http_method_returns_405_not_500() throws Exception {
+            mockMvc.perform(delete("/api/claims/{id}", CLAIM_ID))
+                    .andExpect(status().isMethodNotAllowed());
+        }
+
+        @Test
+        void an_unsupported_content_type_returns_415_not_500() throws Exception {
+            mockMvc.perform(post("/api/claims")
+                            .contentType(MediaType.TEXT_PLAIN)
+                            .content("not json"))
+                    .andExpect(status().isUnsupportedMediaType());
         }
     }
 }
