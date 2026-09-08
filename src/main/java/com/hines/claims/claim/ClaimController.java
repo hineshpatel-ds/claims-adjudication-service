@@ -1,5 +1,6 @@
 package com.hines.claims.claim;
 
+import com.hines.claims.audit.ClaimEventResponse;
 import com.hines.claims.claim.dto.ApproveClaimRequest;
 import com.hines.claims.claim.dto.ClaimResponse;
 import com.hines.claims.claim.dto.RejectClaimRequest;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -115,5 +117,18 @@ public class ClaimController {
     public ClaimResponse reject(@PathVariable UUID id,
                                 @Valid @RequestBody RejectClaimRequest request) {
         return claimService.reject(id, request.expectedVersion(), request.reason());
+    }
+
+    /**
+     * The claim's full history, oldest first.
+     *
+     * <p>Read-only by construction: there is no endpoint to add, edit, or remove
+     * an audit entry, and the database rejects both UPDATE and DELETE on the
+     * table (V3). History is produced as a side effect of things happening, never
+     * authored directly.
+     */
+    @GetMapping("/{id}/events")
+    public List<ClaimEventResponse> events(@PathVariable UUID id) {
+        return claimService.findEvents(id);
     }
 }

@@ -6,12 +6,15 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.Version;
 import org.hibernate.proxy.HibernateProxy;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -91,6 +94,16 @@ public class Claim {
     private long version;
 
     /**
+     * Transitions recorded but not yet written to the audit trail.
+     *
+     * <p>{@code @Transient} - not a column, not persisted, and empty on a freshly
+     * loaded entity. It exists only to carry what happened during this unit of
+     * work up to the service, which writes the audit rows.
+     */
+    @Transient
+    private final List<ClaimTransition> pendingTransitions = new ArrayList<>();
+
+    /**
      * Required by JPA, which instantiates entities reflectively before populating
      * fields. Protected rather than public so application code cannot create a
      * Claim in an invalid state - use {@link #submit} instead.
@@ -113,6 +126,9 @@ public class Claim {
         this.incidentDate = incidentDate;
         this.submittedAt = submittedAt;
         this.status = ClaimStatus.SUBMITTED;
+        // The creation event. from is null: nothing precedes a claim existing.
+        this.pendingTransitions.add(new ClaimTransition(null, ClaimStatus.SUBMITTED,
+                "Claimed %s for %s".formatted(claimedAmount, claimType)));
     }
 
     /**
@@ -150,7 +166,7 @@ public class Claim {
 
     /** SUBMITTED -> UNDER_REVIEW. An adjuster has picked the claim up. */
     public void startReview() {
-        transitionTo(ClaimStatus.UNDER_REVIEW);
+        transitionTo(ClaimStatus.UNDER_REVIEW, null);
     }
 
     /**
@@ -171,7 +187,7 @@ public class Claim {
                     "approved amount " + amount + " exceeds claimed amount " + claimedAmount);
         }
 
-        transitionTo(ClaimStatus.APPROVED);
+        transitionTo(ClaimStatus.APPROVED, "Approved for %s of %s claimed".formatted(amount, claimedAmount));
         this.approvedAmount = amount;
         this.decidedAt = decidedAt;
     }
@@ -181,7 +197,7 @@ public class Claim {
         requireText(reason, "rejection reason");
         Objects.requireNonNull(decidedAt, "decidedAt is required");
 
-        transitionTo(ClaimStatus.REJECTED);
+        transitionTo(ClaimStatus.REJECTED, reason);
         this.rejectionReason = reason;
         this.decidedAt = decidedAt;
     }
@@ -190,20 +206,42 @@ public class Claim {
     public void markPaid(Instant paidAt) {
         Objects.requireNonNull(paidAt, "paidAt is required");
 
-        transitionTo(ClaimStatus.PAID);
+        transitionTo(ClaimStatus.PAID, "Paid %s".formatted(approvedAmount));
         this.paidAt = paidAt;
     }
 
     /**
      * The single choke point for status changes. Every transition passes through
      * here, so an illegal one is impossible to express regardless of which method
-     * was called.
+     * was called - and every legal one is recorded for the audit trail.
+     *
+     * <p>Recording here rather than in the service is what makes the audit trail
+     * trustworthy. A future transition method cannot forget to log itself, because
+     * the only way to change status is through this method, and this method always
+     * records. "Remember to write an audit event" is a rule that holds until
+     * someone is in a hurry; this holds structurally.
      */
-    private void transitionTo(ClaimStatus target) {
+    private void transitionTo(ClaimStatus target, String detail) {
         if (!status.canTransitionTo(target)) {
             throw new IllegalClaimTransitionException(id, status, target);
         }
+        ClaimStatus previous = this.status;
         this.status = target;
+        pendingTransitions.add(new ClaimTransition(previous, target, detail));
+    }
+
+    /**
+     * Hand over the transitions recorded since the last call, and forget them.
+     *
+     * <p>Draining rather than merely reading: the service persists what it takes,
+     * so leaving them in place would write the same audit rows twice on the next
+     * call. The list is {@code @Transient} - it lives only for this instance's
+     * lifetime and is never a column.
+     */
+    public List<ClaimTransition> drainPendingTransitions() {
+        List<ClaimTransition> drained = List.copyOf(pendingTransitions);
+        pendingTransitions.clear();
+        return drained;
     }
 
     private static void requireText(String value, String field) {

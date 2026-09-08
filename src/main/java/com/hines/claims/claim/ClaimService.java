@@ -1,5 +1,8 @@
 package com.hines.claims.claim;
 
+import com.hines.claims.audit.ClaimEvent;
+import com.hines.claims.audit.ClaimEventRepository;
+import com.hines.claims.audit.ClaimEventResponse;
 import com.hines.claims.claim.dto.ClaimResponse;
 import com.hines.claims.claim.dto.SubmitClaimRequest;
 import com.hines.claims.idempotency.IdempotencyKeyConflictException;
@@ -10,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -32,8 +37,23 @@ public class ClaimService {
     /** Idempotency keys are scoped per operation, so this names the operation. */
     private static final String SUBMIT_ENDPOINT = "POST /api/claims";
 
+    /**
+     * Who audit rows are attributed to.
+     *
+     * <p>This service has no authentication - deliberately out of scope - so there
+     * is no authenticated principal to record. Writing "system" is honest about
+     * that. With Spring Security this reads from the security context instead, and
+     * nothing else about the audit trail changes.
+     *
+     * <p>Not taken from a request header: a client-supplied identity is
+     * unverifiable, and an audit trail recording whatever the caller claimed is
+     * worse than one recording nothing, because it looks authoritative.
+     */
+    private static final String SYSTEM_ACTOR = "system";
+
     private final ClaimRepository repository;
     private final IdempotencyRecordRepository idempotencyRepository;
+    private final ClaimEventRepository eventRepository;
     private final Clock clock;
 
     /**
@@ -46,9 +66,11 @@ public class ClaimService {
      */
     public ClaimService(ClaimRepository repository,
                         IdempotencyRecordRepository idempotencyRepository,
+                        ClaimEventRepository eventRepository,
                         Clock clock) {
         this.repository = repository;
         this.idempotencyRepository = idempotencyRepository;
+        this.eventRepository = eventRepository;
         this.clock = clock;
     }
 
@@ -208,8 +230,56 @@ public class ClaimService {
      * the stack trace no longer points at the code that caused them.
      */
     private ClaimResponse respondWith(Claim claim) {
+        recordAudit(claim);
         repository.flush();
         return ClaimResponse.from(claim);
+    }
+
+    /**
+     * Write the audit rows for whatever the aggregate just did.
+     *
+     * <p>Called from {@link #respondWith}, which is on every mutating path and no
+     * read path - so transitions are always audited and reads never manufacture
+     * spurious history.
+     *
+     * <p>In the same transaction as the change itself, deliberately. A separate
+     * transaction would leave a window where a crash commits the state change with
+     * no record of it - an audit trail with holes, which is worse than none
+     * because it looks complete.
+     *
+     * <p>The aggregate decides what happened; this only persists it. Nothing here
+     * inspects statuses or reconstructs what must have occurred, so a new
+     * transition added to {@link Claim} is audited without touching this method.
+     */
+    private void recordAudit(Claim claim) {
+        List<ClaimTransition> transitions = claim.drainPendingTransitions();
+        if (transitions.isEmpty()) {
+            return;
+        }
+
+        Instant occurredAt = clock.instant();
+        eventRepository.saveAll(transitions.stream()
+                .map(transition -> ClaimEvent.from(claim.getId(), transition, SYSTEM_ACTOR, occurredAt))
+                .toList());
+    }
+
+    /**
+     * A claim's full history, oldest first.
+     *
+     * <p>Checks the claim exists first, so an unknown id is a 404 rather than an
+     * empty list. Those mean different things: "this claim has no history" is
+     * impossible - every claim has at least its submission event - so returning
+     * {@code []} for a bad id would be quietly misleading.
+     */
+    @Transactional(readOnly = true)
+    public List<ClaimEventResponse> findEvents(UUID claimId) {
+        if (!repository.existsById(claimId)) {
+            throw new ClaimNotFoundException(claimId);
+        }
+
+        return eventRepository.findByClaimIdOrderByOccurredAtAsc(claimId).stream()
+                .map(ClaimEventResponse::from)
+                .toList();
     }
 
     /**
