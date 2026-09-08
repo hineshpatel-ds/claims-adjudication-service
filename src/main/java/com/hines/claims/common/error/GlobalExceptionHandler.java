@@ -2,6 +2,7 @@ package com.hines.claims.common.error;
 
 import com.hines.claims.claim.ClaimNotFoundException;
 import com.hines.claims.claim.IllegalClaimTransitionException;
+import com.hines.claims.claim.StaleClaimVersionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -82,11 +83,32 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
-     * Concurrent modification -> 409.
+     * Stale read -> 409.
+     *
+     * <p>The caller acted on a version of the claim that is no longer current -
+     * they loaded it, someone else changed it, and they decided against what their
+     * screen still showed. Returning both versions lets a UI say precisely what
+     * happened instead of "please try again".
+     */
+    @ExceptionHandler(StaleClaimVersionException.class)
+    ProblemDetail handleStaleVersion(StaleClaimVersionException e) {
+        ProblemDetail problem = problem(HttpStatus.CONFLICT,
+                "Stale claim version",
+                "This claim has changed since you loaded it. Re-read it and retry.",
+                "stale-version");
+        problem.setProperty("claimId", e.getClaimId());
+        problem.setProperty("expectedVersion", e.getExpectedVersion());
+        problem.setProperty("actualVersion", e.getActualVersion());
+        return problem;
+    }
+
+    /**
+     * Write collision -> 409.
      *
      * <p>Raised by the {@code @Version} column when another transaction changed the
-     * row since it was read. The caller's request was valid, so this is a conflict
-     * and is safe to retry after re-reading.
+     * row between our read and our write. Distinct from the stale read above: here
+     * nothing was out of date when the caller started, they simply lost a genuine
+     * race. Safe to retry after re-reading.
      */
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     ProblemDetail handleConcurrentModification(ObjectOptimisticLockingFailureException e) {

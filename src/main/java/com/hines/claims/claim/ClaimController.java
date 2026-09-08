@@ -1,6 +1,9 @@
 package com.hines.claims.claim;
 
+import com.hines.claims.claim.dto.ApproveClaimRequest;
 import com.hines.claims.claim.dto.ClaimResponse;
+import com.hines.claims.claim.dto.RejectClaimRequest;
+import com.hines.claims.claim.dto.ReviewClaimRequest;
 import com.hines.claims.claim.dto.SubmitClaimRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -71,5 +74,37 @@ public class ClaimController {
     @GetMapping("/{id}")
     public ClaimResponse findById(@PathVariable UUID id) {
         return claimService.findById(id);
+    }
+
+    /**
+     * SUBMITTED -&gt; UNDER_REVIEW.
+     *
+     * <p>POST rather than PATCH. PATCH describes editing fields; this is not an
+     * edit, it is a named business action with its own rules and its own audit
+     * meaning. Modelling transitions as sub-resources keeps the API honest about
+     * what is happening - "review this claim", not "set status to UNDER_REVIEW".
+     *
+     * <p>It also means the client never sends a status. They cannot ask for an
+     * arbitrary state; they can only request an action the server knows how to
+     * perform, and the server decides what state results.
+     */
+    @PostMapping("/{id}/review")
+    public ClaimResponse review(@PathVariable UUID id,
+                                @Valid @RequestBody ReviewClaimRequest request) {
+        return claimService.review(id, request.expectedVersion());
+    }
+
+    /** UNDER_REVIEW -&gt; APPROVED, for a specific amount. */
+    @PostMapping("/{id}/approve")
+    public ClaimResponse approve(@PathVariable UUID id,
+                                 @Valid @RequestBody ApproveClaimRequest request) {
+        return claimService.approve(id, request.expectedVersion(), request.approvedAmount());
+    }
+
+    /** UNDER_REVIEW -&gt; REJECTED, with a mandatory reason. */
+    @PostMapping("/{id}/reject")
+    public ClaimResponse reject(@PathVariable UUID id,
+                                @Valid @RequestBody RejectClaimRequest request) {
+        return claimService.reject(id, request.expectedVersion(), request.reason());
     }
 }
