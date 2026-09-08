@@ -3,6 +3,8 @@ package com.hines.claims.common.error;
 import com.hines.claims.claim.ClaimNotFoundException;
 import com.hines.claims.claim.IllegalClaimTransitionException;
 import com.hines.claims.claim.StaleClaimVersionException;
+import com.hines.claims.idempotency.IdempotencyKeyConflictException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -117,6 +119,43 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 "Concurrent modification",
                 "This claim was modified by someone else. Re-read it and retry.",
                 "concurrent-modification");
+    }
+
+    /**
+     * Idempotency key reused with a different body -> 409.
+     *
+     * <p>Not a 400: the request itself is well-formed. It conflicts with a
+     * previous use of that key, which is precisely what 409 means.
+     */
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    ProblemDetail handleIdempotencyConflict(IdempotencyKeyConflictException e) {
+        ProblemDetail problem = problem(HttpStatus.CONFLICT,
+                "Idempotency key reused",
+                "This Idempotency-Key was already used for a different request. Use a new key.",
+                "idempotency-key-conflict");
+        problem.setProperty("idempotencyKey", e.getIdempotencyKey());
+        return problem;
+    }
+
+    /**
+     * Constraint violation -> 409.
+     *
+     * <p>In this service the realistic cause is two simultaneous submissions
+     * carrying the same idempotency key: both find no prior record, both insert,
+     * and the primary key lets exactly one through. The loser's transaction rolls
+     * back entirely - including its claim - so no duplicate survives, and its
+     * retry replays the winner's result.
+     *
+     * <p>The exception text can quote table and column names, so it is logged
+     * rather than returned.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ProblemDetail handleConstraintViolation(DataIntegrityViolationException e) {
+        log.warn("Constraint violation: {}", e.getMostSpecificCause().getMessage());
+        return problem(HttpStatus.CONFLICT,
+                "Conflicting request",
+                "This request conflicts with one already in progress or completed. Retry it.",
+                "conflicting-request");
     }
 
     /**

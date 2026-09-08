@@ -2,11 +2,15 @@ package com.hines.claims.claim;
 
 import com.hines.claims.claim.dto.ClaimResponse;
 import com.hines.claims.claim.dto.SubmitClaimRequest;
+import com.hines.claims.idempotency.IdempotencyKeyConflictException;
+import com.hines.claims.idempotency.IdempotencyRecord;
+import com.hines.claims.idempotency.IdempotencyRecordRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -25,7 +29,11 @@ import java.util.UUID;
 @Service
 public class ClaimService {
 
+    /** Idempotency keys are scoped per operation, so this names the operation. */
+    private static final String SUBMIT_ENDPOINT = "POST /api/claims";
+
     private final ClaimRepository repository;
+    private final IdempotencyRecordRepository idempotencyRepository;
     private final Clock clock;
 
     /**
@@ -36,8 +44,11 @@ public class ClaimService {
      * flaky. With an injected clock a test supplies {@code Clock.fixed(...)} and
      * timestamps become exactly assertable.
      */
-    public ClaimService(ClaimRepository repository, Clock clock) {
+    public ClaimService(ClaimRepository repository,
+                        IdempotencyRecordRepository idempotencyRepository,
+                        Clock clock) {
         this.repository = repository;
+        this.idempotencyRepository = idempotencyRepository;
         this.clock = clock;
     }
 
@@ -48,7 +59,55 @@ public class ClaimService {
      * cannot produce a persisted row even if the DTO constraints were bypassed.
      */
     @Transactional
-    public ClaimResponse submit(SubmitClaimRequest request) {
+    public ClaimResponse submit(SubmitClaimRequest request, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return createClaim(request);
+        }
+
+        String fingerprint = IdempotencyRecord.fingerprint(request);
+
+        Optional<IdempotencyRecord> previous = idempotencyRepository.findById(idempotencyKey);
+        if (previous.isPresent()) {
+            return replay(previous.get(), idempotencyKey, fingerprint);
+        }
+
+        // Order matters. The claim is created first, then the key is recorded, and
+        // both happen in one transaction - so there is never a claim without its
+        // key, nor a key pointing at a claim that was rolled back.
+        //
+        // Under genuine concurrency two requests can both find no previous record
+        // and both proceed. The PRIMARY KEY on idempotency_keys decides it: one
+        // insert succeeds, the other violates the constraint and takes its whole
+        // transaction down, including its claim. The loser gets a 409 and its
+        // retry replays the winner's result. No duplicate survives, and the
+        // guarantee is the database's rather than ours.
+        ClaimResponse created = createClaim(request);
+
+        idempotencyRepository.saveAndFlush(new IdempotencyRecord(
+                idempotencyKey, SUBMIT_ENDPOINT, fingerprint, created.id(), clock.instant()));
+
+        return created;
+    }
+
+    /**
+     * Return what the original request produced, rather than doing the work again.
+     *
+     * <p>The fingerprint check matters: the same key with a <em>different</em> body
+     * is a client bug, and replaying the first result would silently discard the
+     * second request and hand back a claim for something else. Better to fail.
+     */
+    private ClaimResponse replay(IdempotencyRecord record, String key, String fingerprint) {
+        if (!record.getEndpoint().equals(SUBMIT_ENDPOINT)
+                || !record.getRequestHash().equals(fingerprint)) {
+            throw new IdempotencyKeyConflictException(key);
+        }
+
+        return repository.findById(record.getClaimId())
+                .map(ClaimResponse::from)
+                .orElseThrow(() -> new ClaimNotFoundException(record.getClaimId()));
+    }
+
+    private ClaimResponse createClaim(SubmitClaimRequest request) {
         Claim claim = Claim.submit(
                 request.policyNumber(),
                 request.claimantName(),

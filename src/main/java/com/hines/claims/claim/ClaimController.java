@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -49,12 +50,20 @@ public class ClaimController {
      * <p>Returns 201 with a {@code Location} header naming the new resource, which
      * is what "created" means in HTTP. Returning 200 with a bare body is the
      * common shortcut and tells a client nothing about where the thing now lives.
+     *
+     * <p>An optional {@code Idempotency-Key} header makes retries safe: a repeat
+     * carrying the same key returns the original claim instead of creating a
+     * second one. Optional rather than required so the endpoint stays usable from
+     * a plain curl, but any client that retries on timeout should send one - which
+     * is every client that handles failure properly.
      */
     @PostMapping
-    public ResponseEntity<ClaimResponse> submit(@Valid @RequestBody SubmitClaimRequest request,
-                                                UriComponentsBuilder uriBuilder) {
+    public ResponseEntity<ClaimResponse> submit(
+            @Valid @RequestBody SubmitClaimRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            UriComponentsBuilder uriBuilder) {
 
-        ClaimResponse created = claimService.submit(request);
+        ClaimResponse created = claimService.submit(request, idempotencyKey);
 
         URI location = uriBuilder.path("/api/claims/{id}")
                 .buildAndExpand(created.id())

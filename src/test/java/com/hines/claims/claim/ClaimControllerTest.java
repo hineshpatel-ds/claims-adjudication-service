@@ -78,7 +78,7 @@ class ClaimControllerTest {
         @Test
         void a_valid_submission_returns_201_with_a_location_header() throws Exception {
             SubmitClaimRequest request = validRequest();
-            given(claimService.submit(any())).willReturn(responseFor(request));
+            given(claimService.submit(any(), any())).willReturn(responseFor(request));
 
             mockMvc.perform(post("/api/claims")
                             .contentType(MediaType.APPLICATION_JSON)
@@ -206,7 +206,7 @@ class ClaimControllerTest {
         @Test
         void a_client_cannot_set_status_or_approved_amount() throws Exception {
             SubmitClaimRequest request = validRequest();
-            given(claimService.submit(any())).willReturn(responseFor(request));
+            given(claimService.submit(any(), any())).willReturn(responseFor(request));
 
             String body = """
                     {

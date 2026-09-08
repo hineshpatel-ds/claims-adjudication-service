@@ -58,7 +58,7 @@ class ClaimConcurrencyIntegrationTest {
                 "Jane Doe",
                 ClaimType.MEDICAL,
                 new BigDecimal("1000.00"),
-                LocalDate.now().minusDays(3)));
+                LocalDate.now().minusDays(3)), null);
 
         return claimService.review(submitted.id(), submitted.version());
     }
@@ -178,7 +178,7 @@ class ClaimConcurrencyIntegrationTest {
     void each_successful_transition_advances_the_version() {
         ClaimResponse submitted = claimService.submit(new SubmitClaimRequest(
                 "POL-VERSIONS", "Jane Doe", ClaimType.DENTAL,
-                new BigDecimal("300.00"), LocalDate.now().minusDays(1)));
+                new BigDecimal("300.00"), LocalDate.now().minusDays(1)), null);
         assertThat(submitted.version()).isZero();
 
         ClaimResponse reviewed = claimService.review(submitted.id(), submitted.version());
