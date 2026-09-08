@@ -5,12 +5,16 @@ import com.hines.claims.audit.ClaimEventRepository;
 import com.hines.claims.audit.ClaimEventResponse;
 import com.hines.claims.claim.dto.ClaimResponse;
 import com.hines.claims.claim.dto.SubmitClaimRequest;
+import com.hines.claims.common.dto.PageResponse;
 import com.hines.claims.idempotency.IdempotencyKeyConflictException;
 import com.hines.claims.idempotency.IdempotencyRecord;
 import com.hines.claims.idempotency.IdempotencyRecordRepository;
 import com.hines.claims.ledger.LedgerEntry;
 import com.hines.claims.ledger.LedgerEntryRepository;
 import com.hines.claims.ledger.LedgerEntryResponse;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -63,6 +67,16 @@ public class ClaimService {
      * it here rather than inlining the string marks the assumption.
      */
     private static final String PAYOUT_CURRENCY = "CAD";
+
+    /**
+     * The largest page a caller may request.
+     *
+     * <p>Without a cap, {@code ?size=1000000} loads the table into memory and
+     * serialises it. That is a denial of service anyone can trigger with a URL,
+     * and it usually is not malice - just a client that assumed it could ask for
+     * everything.
+     */
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final ClaimRepository repository;
     private final IdempotencyRecordRepository idempotencyRepository;
@@ -174,6 +188,56 @@ public class ClaimService {
         return repository.findById(id)
                 .map(ClaimResponse::from)
                 .orElseThrow(() -> new ClaimNotFoundException(id));
+    }
+
+    /**
+     * List claims matching the given filters, newest submission first.
+     *
+     * <p>The default sort is {@code submittedAt DESC}, which matches
+     * {@code idx_claims_status_submitted_at} from V1 - so a status-filtered list,
+     * the common case for an adjuster's queue, is served straight from the index
+     * without a sort step.
+     *
+     * <p><strong>Offset pagination, with its limits understood.</strong> Spring's
+     * {@code Pageable} issues {@code LIMIT ? OFFSET ?}, which the database
+     * satisfies by scanning and discarding the skipped rows - page 10,000 costs
+     * far more than page 1. It also drifts: if a claim is submitted while someone
+     * is paging, rows shift by one and an item can be seen twice or missed
+     * entirely.
+     *
+     * <p>Both are acceptable here. Claims are filtered before they are paged, so
+     * deep offsets do not arise in practice, and a UI needs the total count that
+     * keyset pagination cannot give. See ADR-0010 for when to switch.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<ClaimResponse> search(ClaimSearchCriteria criteria, Pageable pageable) {
+        Pageable bounded = applyLimits(pageable);
+
+        return PageResponse.from(
+                repository.findAll(ClaimSpecifications.matching(criteria), bounded),
+                ClaimResponse::from);
+    }
+
+    /**
+     * Cap the page size and impose a deterministic default sort.
+     *
+     * <p>Uncapped, {@code ?size=1000000} loads the table into memory and
+     * serialises it - a denial of service anyone can trigger with a URL, and it
+     * does not need malice, just a client that assumed it could fetch everything.
+     *
+     * <p>The sort default matters as much. Without an ORDER BY, PostgreSQL may
+     * return rows in any order it likes, and that order can differ between two
+     * identical requests - so page 2 can repeat a row from page 1 for no visible
+     * reason. Pagination without a total order is not pagination.
+     */
+    private Pageable applyLimits(Pageable pageable) {
+        int size = Math.min(pageable.getPageSize(), MAX_PAGE_SIZE);
+
+        Sort sort = pageable.getSort().isSorted()
+                ? pageable.getSort()
+                : Sort.by(Sort.Direction.DESC, "submittedAt");
+
+        return PageRequest.of(pageable.getPageNumber(), size, sort);
     }
 
     /**

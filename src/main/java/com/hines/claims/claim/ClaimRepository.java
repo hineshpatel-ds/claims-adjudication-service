@@ -1,6 +1,7 @@
 package com.hines.claims.claim;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
 
 import java.util.UUID;
@@ -20,5 +21,6 @@ import java.util.UUID;
  * finder is still code that must be read and maintained.
  */
 @Repository
-public interface ClaimRepository extends JpaRepository<Claim, UUID> {
+public interface ClaimRepository extends JpaRepository<Claim, UUID>,
+        JpaSpecificationExecutor<Claim> {
 }

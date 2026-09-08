@@ -7,8 +7,11 @@ import com.hines.claims.claim.dto.PayoutClaimRequest;
 import com.hines.claims.claim.dto.RejectClaimRequest;
 import com.hines.claims.claim.dto.ReviewClaimRequest;
 import com.hines.claims.claim.dto.SubmitClaimRequest;
+import com.hines.claims.common.dto.PageResponse;
 import com.hines.claims.ledger.LedgerEntryResponse;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Pageable;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,10 +19,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -87,6 +92,33 @@ public class ClaimController {
     @GetMapping("/{id}")
     public ClaimResponse findById(@PathVariable UUID id) {
         return claimService.findById(id);
+    }
+
+    /**
+     * List claims, filtered and paged.
+     *
+     * <p>Every parameter is optional. {@code ?status=UNDER_REVIEW} is an
+     * adjuster's queue; {@code ?policyNumber=POL-123} is one member's history;
+     * {@code ?from=...&to=...} bounds submission time.
+     *
+     * <p>{@code Pageable} is resolved by Spring from {@code page}, {@code size},
+     * and {@code sort} query parameters. The service caps the size and imposes a
+     * default sort - both matter, and neither can be left to the caller.
+     *
+     * <p>Note the return type is our own {@code PageResponse}, not Spring's
+     * {@code Page}. Serialising the framework's page object would make its
+     * internal JSON shape part of this API's contract.
+     */
+    @GetMapping
+    public PageResponse<ClaimResponse> list(
+            @RequestParam(required = false) ClaimStatus status,
+            @RequestParam(required = false) String policyNumber,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            Pageable pageable) {
+
+        return claimService.search(
+                new ClaimSearchCriteria(status, policyNumber, from, to), pageable);
     }
 
     /**
