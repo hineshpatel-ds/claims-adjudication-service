@@ -8,6 +8,9 @@ import com.hines.claims.claim.dto.SubmitClaimRequest;
 import com.hines.claims.idempotency.IdempotencyKeyConflictException;
 import com.hines.claims.idempotency.IdempotencyRecord;
 import com.hines.claims.idempotency.IdempotencyRecordRepository;
+import com.hines.claims.ledger.LedgerEntry;
+import com.hines.claims.ledger.LedgerEntryRepository;
+import com.hines.claims.ledger.LedgerEntryResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,9 +54,20 @@ public class ClaimService {
      */
     private static final String SYSTEM_ACTOR = "system";
 
+    /**
+     * The currency every payout is denominated in.
+     *
+     * <p>A constant because this service is single-currency. Real multi-currency
+     * handling means a currency on the claim, exchange rates with effective dates,
+     * and rounding rules per currency - a substantial feature, not a column. Naming
+     * it here rather than inlining the string marks the assumption.
+     */
+    private static final String PAYOUT_CURRENCY = "CAD";
+
     private final ClaimRepository repository;
     private final IdempotencyRecordRepository idempotencyRepository;
     private final ClaimEventRepository eventRepository;
+    private final LedgerEntryRepository ledgerRepository;
     private final Clock clock;
 
     /**
@@ -67,10 +81,12 @@ public class ClaimService {
     public ClaimService(ClaimRepository repository,
                         IdempotencyRecordRepository idempotencyRepository,
                         ClaimEventRepository eventRepository,
+                        LedgerEntryRepository ledgerRepository,
                         Clock clock) {
         this.repository = repository;
         this.idempotencyRepository = idempotencyRepository;
         this.eventRepository = eventRepository;
+        this.ledgerRepository = ledgerRepository;
         this.clock = clock;
     }
 
@@ -279,6 +295,52 @@ public class ClaimService {
 
         return eventRepository.findByClaimIdOrderByOccurredAtAsc(claimId).stream()
                 .map(ClaimEventResponse::from)
+                .toList();
+    }
+
+    /**
+     * APPROVED -&gt; PAID, writing the balanced ledger entries for the payment.
+     *
+     * <p><strong>The amount comes from the stored claim, never from the request.</strong>
+     * It was fixed at approval by whoever adjudicated it. Accepting an amount here
+     * would let a caller pay a figure nobody approved, which is the single most
+     * dangerous thing this API could permit.
+     *
+     * <p>The claim and its ledger entries are written in one transaction, so the
+     * two cannot disagree: there is no state where a claim reads PAID with no
+     * money recorded, nor money recorded against a claim that is not PAID. Given
+     * that the entries are immutable and the status is not, that consistency has
+     * to be atomic - a repair afterwards is not available.
+     */
+    @Transactional
+    public ClaimResponse payout(UUID id, long expectedVersion) {
+        Claim claim = loadForUpdate(id, expectedVersion);
+
+        // markPaid enforces that only an APPROVED claim can be paid, so a rejected
+        // or already-paid claim throws before any entry is written.
+        claim.markPaid(clock.instant());
+
+        ledgerRepository.saveAll(LedgerEntry.forPayout(
+                claim.getId(), claim.getApprovedAmount(), PAYOUT_CURRENCY, clock.instant()));
+
+        return respondWith(claim);
+    }
+
+    /**
+     * The claim's ledger entries, oldest first.
+     *
+     * <p>Both sides of the movement are returned. One side of a double-entry pair
+     * means nothing on its own, and a response showing only the debit would be
+     * impossible to reconcile.
+     */
+    @Transactional(readOnly = true)
+    public List<LedgerEntryResponse> findLedgerEntries(UUID claimId) {
+        if (!repository.existsById(claimId)) {
+            throw new ClaimNotFoundException(claimId);
+        }
+
+        return ledgerRepository.findByClaimIdOrderByCreatedAtAsc(claimId).stream()
+                .map(LedgerEntryResponse::from)
                 .toList();
     }
 

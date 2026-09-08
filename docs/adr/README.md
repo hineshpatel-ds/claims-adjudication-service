@@ -26,3 +26,4 @@ one `Superseded by ADR-NNNN` rather than editing it — the history is the value
 | [0006](0006-never-expose-entities-over-http.md) | Never expose entities over HTTP | Accepted |
 | [0007](0007-idempotency-via-client-supplied-keys.md) | Idempotency via client-supplied keys | Accepted |
 | [0008](0008-append-only-audit-trail.md) | Append-only audit trail, recorded by the aggregate | Accepted |
+| [0009](0009-double-entry-immutable-ledger.md) | Double-entry, immutable payout ledger | Accepted |

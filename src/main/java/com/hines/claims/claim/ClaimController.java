@@ -3,9 +3,11 @@ package com.hines.claims.claim;
 import com.hines.claims.audit.ClaimEventResponse;
 import com.hines.claims.claim.dto.ApproveClaimRequest;
 import com.hines.claims.claim.dto.ClaimResponse;
+import com.hines.claims.claim.dto.PayoutClaimRequest;
 import com.hines.claims.claim.dto.RejectClaimRequest;
 import com.hines.claims.claim.dto.ReviewClaimRequest;
 import com.hines.claims.claim.dto.SubmitClaimRequest;
+import com.hines.claims.ledger.LedgerEntryResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -117,6 +119,30 @@ public class ClaimController {
     public ClaimResponse reject(@PathVariable UUID id,
                                 @Valid @RequestBody RejectClaimRequest request) {
         return claimService.reject(id, request.expectedVersion(), request.reason());
+    }
+
+    /**
+     * APPROVED -&gt; PAID, writing the balanced ledger entries.
+     *
+     * <p>The request carries no amount. It was fixed at approval and is read from
+     * the stored claim - accepting one here would let a caller pay a figure nobody
+     * adjudicated.
+     */
+    @PostMapping("/{id}/payout")
+    public ClaimResponse payout(@PathVariable UUID id,
+                                @Valid @RequestBody PayoutClaimRequest request) {
+        return claimService.payout(id, request.expectedVersion());
+    }
+
+    /**
+     * The claim's ledger entries, oldest first.
+     *
+     * <p>Both sides of each movement are returned. One half of a double-entry pair
+     * cannot be reconciled on its own.
+     */
+    @GetMapping("/{id}/ledger")
+    public List<LedgerEntryResponse> ledger(@PathVariable UUID id) {
+        return claimService.findLedgerEntries(id);
     }
 
     /**

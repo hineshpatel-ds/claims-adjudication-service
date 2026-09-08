@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
@@ -154,12 +155,17 @@ class AuditTrailIntegrationTest {
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "UPDATE claim_events SET actor = 'someone else' WHERE id = ?", eventId))
                 .describedAs("an audit row must not be editable")
-                .hasMessageContaining("append-only");
+                // Asserting the type too: V5 gives the trigger a real SQLSTATE so
+                // this is a DataIntegrityViolationException (409) rather than an
+                // unclassifiable P0001 that Spring reports as bad SQL grammar (500).
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasStackTraceContaining("append-only");
 
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "DELETE FROM claim_events WHERE id = ?", eventId))
                 .describedAs("an audit row must not be deletable")
-                .hasMessageContaining("append-only");
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasStackTraceContaining("append-only");
 
         // And it is still there, unchanged.
         ClaimEvent survivor = eventRepository.findById(eventId).orElseThrow();
