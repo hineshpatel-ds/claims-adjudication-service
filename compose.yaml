@@ -7,16 +7,49 @@ services:
       POSTGRES_USER: claims
       POSTGRES_PASSWORD: claims
     ports:
+      # Published so psql and the tests can reach it from the host. In a real
+      # deployment this would not be exposed - only the app needs it, and it can
+      # reach it over the internal network.
       - "5432:5432"
     volumes:
       - claims-pgdata:/var/lib/postgresql/data
     healthcheck:
-      # Compose waits for this before reporting the service healthy, so the
-      # app never starts against a database that is still initialising.
+      # pg_isready, not a TCP port check. Postgres binds its port before it can
+      # actually serve queries, so "the port is open" is not "the database is
+      # ready" - and an app that starts on that signal fails its first query.
       test: ["CMD-SHELL", "pg_isready -U claims -d claims"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claims-service
+    depends_on:
+      postgres:
+        # Waits for the health check above to pass, not merely for the container
+        # to exist. Plain `depends_on: [postgres]` only orders startup, which is
+        # why so many stacks crash-loop on first boot and then work on retry.
+        condition: service_healthy
+    environment:
+      # postgres:5432, not localhost. Each container has its own network
+      # namespace, so localhost inside the app container is the app itself.
+      # Compose resolves the service name on its internal network.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/claims
+      SPRING_DATASOURCE_USERNAME: claims
+      SPRING_DATASOURCE_PASSWORD: claims
+
+      # Relaxed binding: Spring maps SPRING_DATASOURCE_URL onto
+      # spring.datasource.url. Environment variables are how configuration
+      # reaches a container, and this is why the same image runs unchanged in
+      # every environment - nothing about the image knows which database it will
+      # talk to.
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
 
 volumes:
   claims-pgdata:

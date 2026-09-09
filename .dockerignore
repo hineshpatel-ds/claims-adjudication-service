@@ -1,0 +1,30 @@
+# Build output. Copying a host-built target/ into the image would defeat the
+# whole point of building inside the container - the image would carry whatever
+# happened to be on someone's laptop rather than a reproducible build.
+target/
+!target/*.jar
+
+# Version control and IDE noise
+.git/
+.gitignore
+.gitattributes
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Docs are not needed at runtime and change constantly, which would bust the
+# build cache on every edit.
+docs/
+README.md
+HELP.md
+LICENSE
+
+# Local overrides and secrets - these must never reach an image
+.env
+*.env
+application-local.yml
+application-local.properties
+*.log
