@@ -95,6 +95,76 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+
+			<!--
+				Exposes each dependency's resolved path as a property, so the Mockito
+				JAR can be named on the command line below without hardcoding a
+				version or a local repository path.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>resolve-dependency-paths</id>
+						<goals>
+							<goal>properties</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!--
+						Two agents, and the @{...} syntax is load-bearing.
+
+						@{argLine} is Surefire's LATE replacement: resolved when Surefire
+						runs, by which time JaCoCo's prepare-agent has set the property.
+						${argLine} would be interpolated during model building instead -
+						before JaCoCo has run - so the agent is silently never attached and
+						coverage comes out empty with no error. That exact mistake cost a
+						debugging round here; the report simply said "missing execution
+						data file".
+
+						Mockito is attached explicitly because it otherwise self-attaches
+						at run time, which warns today and will be disallowed by default in
+						a future JDK. Free to fix now, urgent later.
+					-->
+					<argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+				</configuration>
+			</plugin>
+
+			<!--
+				Coverage. Reported to SonarCloud, and useful on its own: the report at
+				target/site/jacoco/index.html shows which branches tests never take.
+
+				No minimum threshold is enforced. A coverage gate mostly teaches people
+				to write tests that execute code without asserting anything - the number
+				goes up and nothing is verified. Coverage is a diagnostic, not a target.
+			-->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.13</version>
+				<executions>
+					<execution>
+						<id>prepare-agent</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 

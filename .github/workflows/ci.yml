@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege. The default token can write to the repository; this build only
+# reads it. Narrowing permissions means a compromised dependency or action cannot
+# push commits, and it costs nothing to declare.
+permissions:
+  contents: read
+
+# Cancel an in-progress run when new commits land on the same branch. Nobody
+# needs the results of a commit that has already been superseded, and CI minutes
+# spent on stale code are minutes a real run is queued behind.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    # A hung Testcontainers start would otherwise burn the full six-hour default.
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          # Caches ~/.m2 keyed on pom.xml. Without it every run re-downloads the
+          # dependency tree, which on this project is several minutes per run.
+          cache: maven
+
+      - name: Build and test
+        # `verify`, not `test`: verify runs the full lifecycle including the
+        # JaCoCo report, so coverage exists for the artifact upload below.
+        #
+        # Testcontainers works here because ubuntu-latest runners ship a running
+        # Docker daemon. The integration tests genuinely start PostgreSQL 16 -
+        # the concurrency and idempotency tests are meaningless otherwise, so
+        # this is not a formality.
+        run: ./mvnw -B verify
+
+      - name: Upload test and coverage reports
+        # `always()` matters. Without it this step is skipped when the build
+        # fails - which is exactly when the reports are worth reading. A CI run
+        # that discards its evidence on failure makes you re-run locally to learn
+        # what it already knew.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/site/jacoco/
+          retention-days: 7
+          if-no-files-found: warn
+
+  docker:
+    name: Build container image
+    runs-on: ubuntu-latest
+    # Only after tests pass. Building an image from unverified code wastes time
+    # at best, and at worst produces something someone is tempted to run.
+    needs: build
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Not pushed anywhere. Building proves the Dockerfile is valid and the
+          # image assembles; publishing needs a registry and credentials, which
+          # is a deployment concern rather than a CI one.
+          push: false
+          tags: claims-service:${{ github.sha }}
+          # Persist Docker layer cache between runs, so an unchanged dependency
+          # layer is not rebuilt every time.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,5 +1,7 @@
 # Claims Adjudication & Payout Service
 
+[![CI](https://github.com/hineshpatel-ds/claims-adjudication-service/actions/workflows/ci.yml/badge.svg)](https://github.com/hineshpatel-ds/claims-adjudication-service/actions/workflows/ci.yml)
+
 A Spring Boot REST service that accepts insurance claims, moves them through a
 controlled lifecycle, and pays approved amounts out through an immutable ledger.
 
