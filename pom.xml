@@ -15,6 +15,25 @@
 	<description>Claims Adjudication and Payout Service</description>
 	<properties>
 		<java.version>21</java.version>
+
+		<!--
+			Widen what SonarQube analyses.
+
+			The Maven scanner defaults to the Java source directories, so the
+			Dockerfile, the Compose file and the CI workflows are never looked at.
+			That is a real blind spot: infrastructure-as-code is where hardcoded
+			credentials, over-privileged containers, and unpinned images live, and
+			none of those are visible to a Java analyser.
+
+			It also matters for honesty. This project's Security rating read A
+			purely because the files with findings in them were out of scope - which
+			is not the same as having no findings.
+
+			src/main rather than src/main/java so migrations under
+			src/main/resources are included too.
+		-->
+		<sonar.sources>pom.xml,Dockerfile,compose.yaml,.github/workflows,src/main</sonar.sources>
+		<sonar.tests>src/test</sonar.tests>
 	</properties>
 	<dependencies>
 		<dependency>

@@ -36,11 +36,16 @@ code can be changed, bypassed, or simply wrong.
 ## Running it
 
 ```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
 Starts PostgreSQL 16 and the service. Compose waits for `pg_isready` — not merely
 for the container to exist — before starting the app.
+
+Credentials come from `.env`, which is gitignored. `compose.yaml` supplies inline
+defaults for the database name and user but deliberately none for the password: a
+default password is a password somebody eventually ships.
 
 ```bash
 curl http://localhost:8080/actuator/health

@@ -1,11 +1,22 @@
+# Local development stack.
+#
+# Credentials come from the environment, not from this file. Compose reads a
+# `.env` file in this directory automatically - copy `.env.example` to `.env` to
+# get started.
+#
+# Non-secret values keep inline defaults so the file stays self-documenting.
+# POSTGRES_PASSWORD deliberately has none: a default password is a password
+# somebody eventually ships, and "it was only meant for local dev" is how most of
+# them get there.
+
 services:
   postgres:
     image: postgres:16-alpine
     container_name: claims-postgres
     environment:
-      POSTGRES_DB: claims
-      POSTGRES_USER: claims
-      POSTGRES_PASSWORD: claims
+      POSTGRES_DB: ${POSTGRES_DB:-claims}
+      POSTGRES_USER: ${POSTGRES_USER:-claims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD - copy .env.example to .env}
     ports:
       # Published so psql and the tests can reach it from the host. In a real
       # deployment this would not be exposed - only the app needs it, and it can
@@ -17,7 +28,10 @@ services:
       # pg_isready, not a TCP port check. Postgres binds its port before it can
       # actually serve queries, so "the port is open" is not "the database is
       # ready" - and an app that starts on that signal fails its first query.
-      test: ["CMD-SHELL", "pg_isready -U claims -d claims"]
+      #
+      # $$ escapes the substitution so the shell inside the container expands it,
+      # rather than Compose expanding it on the host.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -38,9 +52,9 @@ services:
       # postgres:5432, not localhost. Each container has its own network
       # namespace, so localhost inside the app container is the app itself.
       # Compose resolves the service name on its internal network.
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/claims
-      SPRING_DATASOURCE_USERNAME: claims
-      SPRING_DATASOURCE_PASSWORD: claims
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-claims}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-claims}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD - copy .env.example to .env}
 
       # Relaxed binding: Spring maps SPRING_DATASOURCE_URL onto
       # spring.datasource.url. Environment variables are how configuration
