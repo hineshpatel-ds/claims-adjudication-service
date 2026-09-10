@@ -26,9 +26,21 @@ jobs:
     # A hung Testcontainers start would otherwise burn the full six-hour default.
     timeout-minutes: 25
 
+    # Secrets are not available in job-level `if:`, so they are lifted into env
+    # here and the steps below check env instead. This is what lets the quality
+    # steps skip cleanly on a repository that has not configured them yet,
+    # instead of failing and turning the badge red.
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
     steps:
       - name: Check out
         uses: actions/checkout@v4
+        with:
+          # Full history, not a shallow clone. SonarCloud uses git blame to
+          # attribute issues to authors and to work out which lines are "new
+          # code" for the quality gate; a depth-1 clone leaves it blind to both.
+          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -63,6 +75,55 @@ jobs:
             target/site/jacoco/
           retention-days: 7
           if-no-files-found: warn
+
+      # Static analysis. Skipped entirely until SONAR_TOKEN is configured, so a
+      # fork or a fresh clone still gets a green build.
+      #
+      # Runs after `verify` on purpose: Sonar reads the JaCoCo report produced by
+      # that step. Run it before the tests and coverage shows as 0%, which then
+      # fails a "coverage on new code" gate for no real reason.
+      - name: SonarCloud analysis
+        if: env.SONAR_TOKEN != ''
+        run: >
+          ./mvnw -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar
+          -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+          -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+
+  security:
+    name: Dependency scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Snyk scans the resolved dependency tree for known vulnerabilities.
+      #
+      # This is the check that catches the thing you did not write: a transitive
+      # dependency four levels down with a published CVE. Nothing in the test
+      # suite can find that, because the code is correct - the library is not.
+      #
+      # --severity-threshold=high so the build is not blocked by low-severity
+      # findings in test-only dependencies. Worth revisiting: the right threshold
+      # depends on how much noise the team will actually triage rather than learn
+      # to ignore.
+      - name: Snyk dependency scan
+        if: env.SNYK_TOKEN != ''
+        uses: snyk/actions/maven@master
+        with:
+          args: --severity-threshold=high --file=pom.xml
 
   docker:
     name: Build container image
