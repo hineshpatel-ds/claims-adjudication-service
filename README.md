@@ -1,6 +1,11 @@
 # Claims Adjudication & Payout Service
 
 [![CI](https://github.com/hineshpatel-ds/claims-adjudication-service/actions/workflows/ci.yml/badge.svg)](https://github.com/hineshpatel-ds/claims-adjudication-service/actions/workflows/ci.yml)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=hineshpatel-ds_claims-adjudication-service&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=hineshpatel-ds_claims-adjudication-service)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=hineshpatel-ds_claims-adjudication-service&metric=coverage)](https://sonarcloud.io/summary/new_code?id=hineshpatel-ds_claims-adjudication-service)
+[![Reliability](https://sonarcloud.io/api/project_badges/measure?project=hineshpatel-ds_claims-adjudication-service&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=hineshpatel-ds_claims-adjudication-service)
+[![Security](https://sonarcloud.io/api/project_badges/measure?project=hineshpatel-ds_claims-adjudication-service&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=hineshpatel-ds_claims-adjudication-service)
+[![Maintainability](https://sonarcloud.io/api/project_badges/measure?project=hineshpatel-ds_claims-adjudication-service&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=hineshpatel-ds_claims-adjudication-service)
 
 A Spring Boot REST service that accepts insurance claims, moves them through a
 controlled lifecycle, and pays approved amounts out through an immutable
