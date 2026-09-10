@@ -9,6 +9,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
@@ -279,21 +280,44 @@ class ClaimTest {
             assertThat(aSubmittedClaim()).isNotEqualTo(aSubmittedClaim());
         }
 
+        /**
+         * Reflexivity is part of the {@code equals} contract, and it is not free
+         * here: the implementation ends with {@code id != null && ...}, so without
+         * the {@code this == o} short circuit an entity whose id had not been
+         * assigned would not equal itself.
+         */
         @Test
         void a_claim_equals_itself() {
             Claim claim = aSubmittedClaim();
-            assertThat(claim).isEqualTo(claim);
+
+            assertThat(claim.equals(claim))
+                    .describedAs("equals must be reflexive")
+                    .isTrue();
         }
 
+        /**
+         * What "identity survives" actually means: the two things collection
+         * membership depends on do not move when the claim's state does.
+         *
+         * <p>This test previously asserted {@code claim.isEqualTo(claim)}, which
+         * cannot fail - {@code equals} short-circuits on {@code this == o}, so it
+         * would have passed even if the transition corrupted every field. Static
+         * analysis flagged it, correctly.
+         */
         @Test
         void identity_survives_a_state_change() {
             Claim claim = aSubmittedClaim();
-            int before = claim.hashCode();
+            int hashBefore = claim.hashCode();
+            UUID idBefore = claim.getId();
 
             claim.startReview();
 
-            assertThat(claim.hashCode()).isEqualTo(before);
-            assertThat(claim).isEqualTo(claim);
+            assertThat(claim.hashCode())
+                    .describedAs("a moved hash makes an entity unfindable in a HashSet")
+                    .isEqualTo(hashBefore);
+            assertThat(claim.getId())
+                    .describedAs("identity is the id, and a transition must not change it")
+                    .isEqualTo(idBefore);
         }
 
         @Test
