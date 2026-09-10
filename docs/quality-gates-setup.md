@@ -1,4 +1,4 @@
-# Enabling SonarCloud and Snyk
+# Enabling SonarQube Cloud and Snyk
 
 The CI workflow already contains both steps. They **skip silently** until the
 corresponding token exists, so the build stays green on a fresh clone or a fork
@@ -6,67 +6,124 @@ rather than failing on missing credentials.
 
 Enabling each is a one-time setup on the repository.
 
+> **Naming:** Sonar renamed the products. What was *SonarCloud* is now
+> **SonarQube Cloud**; the self-hosted server is **SonarQube Server**. Same
+> analysis engine, same rules, same Maven goal — only the host URL and how the
+> token is issued differ. Older documentation and the `sonarcloud.io` domain still
+> use the previous name.
+
 ---
 
-## SonarCloud — static analysis and quality gates
+## SonarQube Cloud — static analysis and quality gates
 
-Free for public repositories.
+Free for public repositories, with unlimited lines of code.
 
-**1. Sign in.** Go to <https://sonarcloud.io> and sign in with GitHub. Authorise
-it for this repository only — there is no reason to grant it access to
-everything.
+### 1. Install the GitHub App
 
-**2. Create the project.** *Analyze new project* → pick
-`claims-adjudication-service`. Note the two values it shows you:
+Sign in at <https://sonarcloud.io> with GitHub.
 
-- **Project key** — usually `hineshpatel-ds_claims-adjudication-service`
-- **Organization** — usually `hineshpatel-ds`
+When it asks which repositories to authorise, choose **Only select repositories**
+and pick this one. The app requests *read and write access to checks, commit
+statuses, pull requests, and security events* — legitimate, since it posts the
+quality gate onto pull requests, but "All repositories" also covers every repo you
+create in future. You can add more at any time.
 
-**3. Choose the analysis method.** Select **GitHub Actions**, *not* automatic
-analysis. Automatic analysis cannot see the JaCoCo coverage report, so coverage
-shows as 0% and the quality gate then fails on "coverage on new code" for no real
-reason. If you enabled automatic analysis already, turn it off in
-*Administration → Analysis Method*.
+### 2. Create the organization
 
-**4. Add the token.** SonarCloud shows a `SONAR_TOKEN`. In GitHub:
+Take the defaults, with one change: **untick "Automatically import new GitHub
+repositories."** Private projects consume the 50k private-lines allowance, and
+auto-import means a future private repo starts consuming it without you deciding
+to.
 
-*Settings → Secrets and variables → Actions*
+The **Key** on this screen is your `SONAR_ORGANIZATION`. For this project:
+`hineshpatel-ds`.
 
-| Type | Name | Value |
+Choose the **Free** plan. Public repositories get unlimited lines of code, so
+nothing here needs paying for.
+
+### 3. Import the project
+
+Select `claims-adjudication-service`, then **Set Up**. It is created as a *public*
+project, which means the dashboard is linkable without an account — useful when
+someone asks to see it.
+
+The resulting project key is `hineshpatel-ds_claims-adjudication-service`, and it
+also appears in the dashboard URL as `?id=...`.
+
+### 4. Turn Automatic Analysis OFF — this one matters
+
+**Administration → Analysis method → Automatic Analysis: off.**
+
+Automatic Analysis is often enabled by default, and it will produce a working-looking
+analysis that is quietly wrong. It runs on Sonar's servers by cloning the
+repository, so it never executes the build and never sees
+`target/site/jacoco/jacoco.xml`.
+
+The symptoms:
+
+- Coverage reports **0%**, with the message *"A few extra steps are needed for
+  SonarQube Cloud to analyze your code coverage"*
+- The default *Sonar way* gate requires 80% coverage on new code, so the gate
+  fails on every push — despite actual coverage being 90%
+
+The failure is confusing because nothing is wrong with the code, and the usual
+reaction is to disable the quality gate, which discards the useful part.
+
+This project's workflow runs the scanner **after** `./mvnw verify`, so the JaCoCo
+report already exists when Sonar reads it.
+
+### 5. Generate the token
+
+**Analysis method → With GitHub Actions** walks through this and generates one, or
+go directly to your avatar → **My Account → Security → Generate Tokens**
+(<https://sonarcloud.io/account/security>).
+
+Choose a **Project Analysis Token** scoped to this project rather than a global
+User Token — if it leaks, the blast radius is one public repository instead of the
+whole account.
+
+**Copy it immediately.** The value is shown once; if you navigate away, delete it
+and generate another.
+
+### 6. Add the three values to GitHub
+
+These live in the **repository's** settings, not your account settings — both are
+called "Settings", which catches people out:
+
+```
+https://github.com/hineshpatel-ds/claims-adjudication-service/settings/secrets/actions
+```
+
+| Tab | Name | Value |
 |---|---|---|
-| Secret | `SONAR_TOKEN` | the token from SonarCloud |
-| Variable | `SONAR_PROJECT_KEY` | the project key above |
-| Variable | `SONAR_ORGANIZATION` | the organization above |
+| **Secrets** | `SONAR_TOKEN` | the token from step 5 |
+| **Variables** | `SONAR_PROJECT_KEY` | `hineshpatel-ds_claims-adjudication-service` |
+| **Variables** | `SONAR_ORGANIZATION` | `hineshpatel-ds` |
 
-The token is a **secret** (masked in logs, never readable again). The other two
-are **variables** — they are not sensitive, and keeping them out of secrets means
-they show up in logs where they are useful for debugging.
+Secrets are encrypted, masked in logs, and unreadable after saving. Variables are
+plain text and visible in logs — which is where a project key is actually useful
+when a run misbehaves.
 
-**5. Set the quality gate.** The default *Sonar way* gate applies to **new code
-only**, which is the right default: it stops new problems entering without
-demanding you fix everything that already exists before you can merge anything.
+Push any commit and the analysis runs with coverage attached.
 
-Push a commit, and the analysis appears at
-`https://sonarcloud.io/project/overview?id=<your project key>`.
+### The quality gate
 
-### Adding the badge
+The default *Sonar way* gate applies to **new code only**. That is the right
+default: it stops new problems entering without demanding you fix everything that
+already exists before you can merge anything.
 
-Once the first analysis completes, SonarCloud generates badge markdown under
-*Project Information → Badges*. Add it next to the CI badge in the README.
+"Quality gate: Not computed" on a first analysis is normal — there is no previous
+analysis to diff against, and gates are skipped when new code is under 20 lines.
 
 ---
 
 ## Snyk — dependency vulnerability scanning
 
-Free tier covers open-source projects.
+1. Sign in at <https://snyk.io> with GitHub
+2. **Account settings → Auth Token → click to show**
+3. Add it as a repository **secret** named `SNYK_TOKEN`, same page as above
 
-**1. Sign in** at <https://snyk.io> with GitHub.
-
-**2. Get the token.** *Account settings → Auth Token → click to show*.
-
-**3. Add it** as a GitHub secret named `SNYK_TOKEN`, the same way as above.
-
-That is all. The `Dependency scan` job starts running on the next push.
+The `Dependency scan` job starts running on the next push.
 
 ### What it actually finds
 
@@ -74,31 +131,23 @@ This is the check that catches **the code you did not write**. A transitive
 dependency four levels down with a published CVE is invisible to every test in
 this repository — the code is correct, the library is not.
 
-The scan is set to `--severity-threshold=high`, so low-severity findings in
-test-only dependencies do not block the build. That threshold is a judgement, not
-a rule: too low and people learn to ignore a permanently red build, which is
+The scan uses `--severity-threshold=high`, so low-severity findings in test-only
+dependencies do not block the build. That threshold is a judgement rather than a
+rule: set it too low and people learn to ignore a permanently red build, which is
 worse than not scanning at all.
 
 ---
 
-## What to say about this in an interview
+## Describing this in an interview
 
-Worth being precise, because the difference is noticeable:
-
-> "SonarCloud runs on every push with the quality gate scoped to new code, and
+> "SonarQube Cloud runs on every push with the quality gate scoped to new code, and
 > Snyk scans the dependency tree for known CVEs. Coverage comes from JaCoCo and is
 > reported rather than gated — a coverage threshold mostly produces tests that
 > execute code without asserting on it."
 
-That describes a pipeline you configured and can defend. "I added SonarQube to my
-project" describes a checkbox.
+That describes a pipeline you configured and can defend.
 
-### If asked about SonarQube versus SonarCloud
-
-Same analysis engine. SonarQube is the self-hosted server, SonarCloud is the
-hosted service. An organisation running SonarQube on-premises — most banks and
-insurers do — uses the same rules, the same quality gate concept, and the same
-Maven goal; only the `sonar.host.url` and how the token is issued differ.
-
-Saying that plainly is better than implying you have run the self-hosted server
-when you have not.
+**If asked about SonarQube Server versus Cloud:** same engine, same rules, same
+Maven goal; Server is self-hosted and Cloud is managed. Most banks and insurers
+run Server on-premises. Saying that plainly is better than implying you have
+operated the self-hosted server when you have not.

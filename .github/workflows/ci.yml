@@ -37,7 +37,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
         with:
-          # Full history, not a shallow clone. SonarCloud uses git blame to
+          # Full history, not a shallow clone. SonarQube Cloud uses git blame to
           # attribute issues to authors and to work out which lines are "new
           # code" for the quality gate; a depth-1 clone leaves it blind to both.
           fetch-depth: 0
@@ -82,7 +82,7 @@ jobs:
       # Runs after `verify` on purpose: Sonar reads the JaCoCo report produced by
       # that step. Run it before the tests and coverage shows as 0%, which then
       # fails a "coverage on new code" gate for no real reason.
-      - name: SonarCloud analysis
+      - name: SonarQube Cloud analysis
         if: env.SONAR_TOKEN != ''
         run: >
           ./mvnw -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar

@@ -225,10 +225,10 @@ both documented in the ADRs they relate to.
 
 Java 21 · Spring Boot 4.1 · PostgreSQL 16 · Flyway · Spring Data JPA ·
 Testcontainers · JaCoCo · Docker (multi-stage, non-root) · GitHub Actions ·
-SonarCloud · Snyk
+SonarQube Cloud · Snyk
 
-SonarCloud and Snyk steps are in the pipeline and skip until their tokens are
-configured, so a fresh clone still builds green. See
+SonarQube Cloud and Snyk steps are in the pipeline and skip until their tokens
+are configured, so a fresh clone still builds green. See
 [docs/quality-gates-setup.md](docs/quality-gates-setup.md).
 
 ---
