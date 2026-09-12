@@ -125,9 +125,15 @@ jobs:
       # findings in test-only dependencies. Worth revisiting: the right threshold
       # depends on how much noise the team will actually triage rather than learn
       # to ignore.
+      # Pinned to a commit SHA, not @master.
+      #
+      # A tag or branch is mutable: whoever controls the repository can move it,
+      # and this action receives SNYK_TOKEN. @master means "run whatever is on
+      # that branch right now, with my credentials" - a supply-chain risk that
+      # costs nothing to close. Renovate or Dependabot can bump the pin.
       - name: Snyk dependency scan
         if: env.SNYK_TOKEN != ''
-        uses: snyk/actions/maven@master
+        uses: snyk/actions/maven@12140f4059e244892ae643824a95459a102120dd  # master
         with:
           args: --severity-threshold=high --file=pom.xml
 
@@ -144,10 +150,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
         with:
           context: .
           # Not pushed anywhere. Building proves the Dockerfile is valid and the

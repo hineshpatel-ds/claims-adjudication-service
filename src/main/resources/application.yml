@@ -2,10 +2,21 @@ spring:
   application:
     name: claims-service
 
+  # Credentials come from the environment, never from this file.
+  #
+  # Spring's relaxed binding maps SPRING_DATASOURCE_PASSWORD onto
+  # spring.datasource.password, which is how Compose and any real deployment
+  # supply it. The URL and username keep local defaults because they are not
+  # secrets; the password deliberately defaults to empty rather than to a working
+  # value, so nothing here is a credential that could be shipped by accident.
+  #
+  # Static analysis flagged the previous literal as BLOCKER - correctly. The same
+  # mistake had already been fixed in compose.yaml and missed here, which is what
+  # a scanner catches and a reviewer who has "already done that fix" does not.
   datasource:
-    url: jdbc:postgresql://localhost:5432/claims
-    username: claims
-    password: claims
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/claims}
+    username: ${SPRING_DATASOURCE_USERNAME:claims}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
 
   jpa:
     # validate = Hibernate checks entities against the real schema and refuses
